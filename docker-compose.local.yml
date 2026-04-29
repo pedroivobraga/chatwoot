@@ -1,0 +1,141 @@
+version: '3.7'
+
+# Para iniciar:
+#   docker compose -f docker-compose.local.yml up -d
+#
+# Na primeira vez, prepare o banco:
+#   docker compose -f docker-compose.local.yml exec chatwoot_app bundle exec rails db:chatwoot_prepare
+#
+# Acesse em: http://localhost:3000
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USERNAME:-chatwoot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chatwoot}
+      - POSTGRES_DB=${POSTGRES_DATABASE:-chatwoot}
+    volumes:
+      - chatwoot_pg_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - chatwoot_redis_data:/data
+
+  chatwoot_app:
+    image: pedroivobraga/chatwoot-rails:4.12.1-enterprise-alpha
+    command: bundle exec rails s -p 3000 -b 0.0.0.0
+    entrypoint: docker/entrypoints/rails.sh
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - chatwoot_data:/app/storage
+      - chatwoot_brand:/app/public/brand-assets
+    environment:
+      - INSTALLATION_NAME=Ame
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+      # Chatwoot
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE:-local_secret_key_base_change_in_production}
+      - FRONTEND_URL=http://localhost:3001
+      - DEFAULT_LOCALE=pt_BR
+      - FORCE_SSL=false
+      - ENABLE_ACCOUNT_SIGNUP=true
+      # Redis
+      - REDIS_URL=redis://redis:6379
+      # Banco de dados
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USERNAME=${POSTGRES_USERNAME:-chatwoot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chatwoot}
+      - POSTGRES_DATABASE=${POSTGRES_DATABASE:-chatwoot}
+      - ACTIVE_STORAGE_SERVICE=local
+      - RAILS_LOG_TO_STDOUT=true
+      - USE_INBOX_AVATAR_FOR_BOT=true
+      # Facebook / Instagram (opcional localmente)
+      - FB_APP_ID=${FB_APP_ID:-}
+      - FB_APP_SECRET=${FB_APP_SECRET:-}
+      - FB_VERIFY_TOKEN=${FB_VERIFY_TOKEN:-}
+      - IG_VERIFY_TOKEN=${IG_VERIFY_TOKEN:-}
+      - ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT=false
+      # Performance
+      - SIDEKIQ_CONCURRENCY=5
+      - RACK_TIMEOUT_SERVICE_TIMEOUT=0
+      - RAILS_MAX_THREADS=5
+      - WEB_CONCURRENCY=1
+      - ENABLE_RACK_ATTACK=false
+      # SMTP (opcional localmente)
+      - MAILER_SENDER_EMAIL=${MAILER_SENDER_EMAIL:-}
+      - SMTP_DOMAIN=${SMTP_DOMAIN:-}
+      - SMTP_ADDRESS=${SMTP_ADDRESS:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_AUTHENTICATION=login
+      - SMTP_ENABLE_STARTTLS_AUTO=true
+      - SMTP_OPENSSL_VERIFY_MODE=peer
+
+  chatwoot_sidekiq:
+    image: pedroivobraga/chatwoot-rails:4.12.1-enterprise-alpha
+    command: bundle exec sidekiq -C config/sidekiq.yml
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - chatwoot_data:/app/storage
+      - chatwoot_brand:/app/public/brand-assets
+    environment:
+      - INSTALLATION_NAME=Ame
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE:-local_secret_key_base_change_in_production}
+      - FRONTEND_URL=http://localhost:3001
+      - DEFAULT_LOCALE=pt_BR
+      - FORCE_SSL=false
+      - ENABLE_ACCOUNT_SIGNUP=true
+      - REDIS_URL=redis://redis:6379
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USERNAME=${POSTGRES_USERNAME:-chatwoot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chatwoot}
+      - POSTGRES_DATABASE=${POSTGRES_DATABASE:-chatwoot}
+      - ACTIVE_STORAGE_SERVICE=local
+      - RAILS_LOG_TO_STDOUT=true
+      - USE_INBOX_AVATAR_FOR_BOT=true
+      - FB_APP_ID=${FB_APP_ID:-}
+      - FB_APP_SECRET=${FB_APP_SECRET:-}
+      - FB_VERIFY_TOKEN=${FB_VERIFY_TOKEN:-}
+      - IG_VERIFY_TOKEN=${IG_VERIFY_TOKEN:-}
+      - ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT=false
+      - SIDEKIQ_CONCURRENCY=5
+      - RACK_TIMEOUT_SERVICE_TIMEOUT=0
+      - RAILS_MAX_THREADS=5
+      - WEB_CONCURRENCY=1
+      - ENABLE_RACK_ATTACK=false
+      - MAILER_SENDER_EMAIL=${MAILER_SENDER_EMAIL:-}
+      - SMTP_DOMAIN=${SMTP_DOMAIN:-}
+      - SMTP_ADDRESS=${SMTP_ADDRESS:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_AUTHENTICATION=login
+      - SMTP_ENABLE_STARTTLS_AUTO=true
+      - SMTP_OPENSSL_VERIFY_MODE=peer
+
+volumes:
+  chatwoot_data:
+  chatwoot_brand:
+  chatwoot_pg_data:
+  chatwoot_redis_data:
