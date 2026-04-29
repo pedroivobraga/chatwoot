@@ -22,6 +22,76 @@ describe Messages::MessageBuilder do
     end
   end
 
+  describe '#perform with historical backdating' do
+    let(:channel_api) { create(:channel_api, account: account) }
+    let(:conversation) { create(:conversation, inbox: channel_api.inbox, account: account) }
+    let(:backdate_ts) { 3.days.ago.to_i }
+
+    context 'when historical=true with external_created_at' do
+      let(:params) do
+        ActionController::Parameters.new({
+                                           content: 'historical msg',
+                                           message_type: 'incoming',
+                                           historical: true,
+                                           external_created_at: backdate_ts
+                                         })
+      end
+
+      it 'sets created_at to the external timestamp' do
+        message = message_builder
+        expect(message.created_at.to_i).to eq(backdate_ts)
+      end
+
+      it 'does not rewind conversation.last_activity_at' do
+        now_ish = Time.current
+        conversation.update!(last_activity_at: now_ish)
+        message_builder
+        expect(conversation.reload.last_activity_at).to be_within(2.seconds).of(now_ish)
+      end
+
+      it 'does not set conversation.waiting_since to the backdated time' do
+        conversation.update!(waiting_since: nil)
+        message_builder
+        expect(conversation.reload.waiting_since).to be_nil
+      end
+
+      it 'stores external_created_at in content_attributes' do
+        message = message_builder
+        expect(message.content_attributes[:external_created_at]).to eq(backdate_ts)
+      end
+    end
+
+    context 'when historical flag is absent' do
+      let(:params) do
+        ActionController::Parameters.new({
+                                           content: 'live msg',
+                                           message_type: 'incoming',
+                                           external_created_at: backdate_ts
+                                         })
+      end
+
+      it 'uses current time for created_at' do
+        message = message_builder
+        expect(message.created_at).to be_within(5.seconds).of(Time.current)
+      end
+    end
+
+    context 'when historical=true without external_created_at' do
+      let(:params) do
+        ActionController::Parameters.new({
+                                           content: 'ambiguous',
+                                           message_type: 'incoming',
+                                           historical: true
+                                         })
+      end
+
+      it 'ignores the historical flag and uses current time' do
+        message = message_builder
+        expect(message.created_at).to be_within(5.seconds).of(Time.current)
+      end
+    end
+  end
+
   describe '#content_attributes' do
     context 'when content_attributes is a JSON string' do
       let(:params) do
