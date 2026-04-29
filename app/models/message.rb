@@ -427,11 +427,6 @@ class Message < ApplicationRecord
   end
 
   def reopen_resolved_conversation
-    # When the inbox is configured to create new conversations on each contact,
-    # do not reopen resolved conversations — the connector or native channel will
-    # route the new message to a fresh conversation instead.
-    return unless conversation.inbox.lock_to_single_conversation
-
     # mark resolved bot conversation as pending to be reopened by bot processor service
     if conversation.inbox.active_bot?
       conversation.pending!
