@@ -1,0 +1,172 @@
+version: '3.7'
+
+##############
+#
+# Para configurar o chatwoot, execute o comando abaixo no console do container:
+#
+# bundle exec rails db:chatwoot_prepare
+#
+# Variáveis de Ambiente:
+#
+# https://www.chatwoot.com/docs/self-hosted/configuration/environment-variables
+#
+#############
+
+services:
+  chatwoot_app:
+    image: pedroivobraga/chatwoot-rails:4.11.2-enterprise
+    command: bundle exec rails s -p 3000 -b 0.0.0.0
+    entrypoint: docker/entrypoints/rails.sh
+    volumes:
+      - chatwoot_data:/app/storage
+      - chatwoot_brand:/app/public/brand-assets
+    networks:
+      - network_public
+    environment:
+      - INSTALLATION_NAME=Ame ## Nome da empresa
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+      # Chatwoot
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE}
+      - FRONTEND_URL=https://atendimento.amelingerie.com
+      - DEFAULT_LOCALE=pt_BR
+      - FORCE_SSL=true
+      - ENABLE_ACCOUNT_SIGNUP=false ## false = Desativar novas inscrições no inicio | true = Ativar novas inscrições no inicio
+      # Redis
+      - REDIS_URL=redis://redis:6379
+
+      # Banco de dados
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USERNAME=${POSTGRES_USERNAME}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DATABASE=${POSTGRES_DATABASE}
+      - ACTIVE_STORAGE_SERVICE=local
+      - RAILS_LOG_TO_STDOUT=true
+      - USE_INBOX_AVATAR_FOR_BOT=true
+
+      # Facebook / Instagram
+      - FB_APP_ID=${FB_APP_ID}
+      - FB_APP_SECRET=${FB_APP_SECRET}
+      - FB_VERIFY_TOKEN=${FB_VERIFY_TOKEN}
+      - IG_VERIFY_TOKEN=${IG_VERIFY_TOKEN}
+
+      - ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT=false
+      # Performance
+      - SIDEKIQ_CONCURRENCY=10
+      - RACK_TIMEOUT_SERVICE_TIMEOUT=0
+      - RAILS_MAX_THREADS=5
+      - WEB_CONCURRENCY=2
+      - ENABLE_RACK_ATTACK=false
+      # SMTP (Gmail)
+      - MAILER_SENDER_EMAIL=${MAILER_SENDER_EMAIL}
+      - SMTP_DOMAIN=gmail.com
+      - SMTP_ADDRESS=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_AUTHENTICATION=login
+      - SMTP_ENABLE_STARTTLS_AUTO=true
+      - SMTP_OPENSSL_VERIFY_MODE=peer
+      - MAILER_INBOUND_EMAIL_DOMAIN=${MAILER_INBOUND_EMAIL_DOMAIN}
+
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2048M
+      labels:
+        - traefik.enable=true
+        - traefik.http.routers.chatwoot_app.rule=Host(`atendimento.amelingerie.com`)
+        - traefik.http.routers.chatwoot_app.entrypoints=websecure
+        - traefik.http.routers.chatwoot_app.tls.certresolver=letsencrypt
+        - traefik.http.routers.chatwoot_app.priority=1
+        - traefik.http.routers.chatwoot_app.service=chatwoot_app
+        - traefik.http.services.chatwoot_app.loadbalancer.server.port=3000
+        - traefik.http.services.chatwoot_app.loadbalancer.passhostheader=true
+        - traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https
+        - traefik.http.routers.chatwoot_app.middlewares=sslheader@docker
+
+  chatwoot_sidekiq:
+    image: pedroivobraga/chatwoot-rails:4.11.2-enterprise
+    command: bundle exec sidekiq -C config/sidekiq.yml
+    volumes:
+      - chatwoot_data:/app/storage
+      - chatwoot_brand:/app/public/brand-assets
+    networks:
+      - network_public
+    environment:
+      - INSTALLATION_NAME=Ame ## Nome da empresa
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+      # Chatwoot
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE}
+      - FRONTEND_URL=https://atendimento.amelingerie.com
+      - DEFAULT_LOCALE=pt_BR
+      - FORCE_SSL=true
+      - ENABLE_ACCOUNT_SIGNUP=false ## false = Desativar novas inscrições no inicio | true = Ativar novas inscrições no inicio
+      # Redis
+      - REDIS_URL=redis://redis:6379
+
+      # Banco de dados
+      - POSTGRES_HOST=postgres
+      - POSTGRES_USERNAME=${POSTGRES_USERNAME}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DATABASE=${POSTGRES_DATABASE}
+      - ACTIVE_STORAGE_SERVICE=local
+      - RAILS_LOG_TO_STDOUT=true
+      - USE_INBOX_AVATAR_FOR_BOT=true
+
+      # Facebook / Instagram
+      - FB_APP_ID=${FB_APP_ID}
+      - FB_APP_SECRET=${FB_APP_SECRET}
+      - FB_VERIFY_TOKEN=${FB_VERIFY_TOKEN}
+      - IG_VERIFY_TOKEN=${IG_VERIFY_TOKEN}
+
+      - ENABLE_MESSENGER_CHANNEL_HUMAN_AGENT=false
+      # Performance
+      - SIDEKIQ_CONCURRENCY=10
+      - RACK_TIMEOUT_SERVICE_TIMEOUT=0
+      - RAILS_MAX_THREADS=5
+      - WEB_CONCURRENCY=2
+      - ENABLE_RACK_ATTACK=false
+      # SMTP (Gmail)
+      - MAILER_SENDER_EMAIL=${MAILER_SENDER_EMAIL}
+      - SMTP_DOMAIN=gmail.com
+      - SMTP_ADDRESS=smtp.gmail.com
+      - SMTP_PORT=587
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_AUTHENTICATION=login
+      - SMTP_ENABLE_STARTTLS_AUTO=true
+      - SMTP_OPENSSL_VERIFY_MODE=peer
+      - MAILER_INBOUND_EMAIL_DOMAIN=${MAILER_INBOUND_EMAIL_DOMAIN}
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1024M
+
+volumes:
+  chatwoot_data:
+    external: true
+    name: chatwoot_data
+  chatwoot_brand:
+    external: true
+    name: chatwoot_brand
+
+networks:
+  network_public:
+    external: true
+    name: network_public

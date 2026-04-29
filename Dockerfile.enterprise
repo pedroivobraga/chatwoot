@@ -1,0 +1,12 @@
+FROM chatwoot/chatwoot:latest
+
+# Override pricing_plan to return 'enterprise' for self-hosted
+COPY lib/chatwoot_hub.rb /app/lib/chatwoot_hub.rb
+
+# Override features.yml with all premium features enabled
+COPY config/features.yml /app/config/features.yml
+
+# Historical message backdating support (used by whatsmeow-cw-connector to
+# preserve real WhatsApp timestamps when importing offline/history messages).
+COPY app/builders/messages/message_builder.rb /app/app/builders/messages/message_builder.rb
+COPY app/models/message.rb /app/app/models/message.rb
