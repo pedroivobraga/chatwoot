@@ -1,0 +1,34 @@
+name: Sync upstream into custom/main
+
+on:
+  schedule:
+    - cron: '0 6 * * *'  # daily at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: custom/main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/chatwoot/chatwoot.git
+          git fetch upstream develop
+
+      - name: Merge upstream/develop
+        run: |
+          git merge upstream/develop --no-edit \
+            -m "chore: merge upstream chatwoot/develop into custom/main"
+
+      - name: Push
+        run: git push origin custom/main
