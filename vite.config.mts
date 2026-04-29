@@ -71,6 +71,19 @@ export default defineConfig({
         }
       : undefined,
   },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        // Ensure @import 'reset' and other bare imports resolve correctly
+        // regardless of whether sass or sass-embedded is used as the compiler.
+        loadPaths: [
+          path.resolve('./app/javascript/widget/assets/scss'),
+          path.resolve('./app/javascript/dashboard/assets/scss'),
+          path.resolve('./node_modules'),
+        ],
+      },
+    },
+  },
   resolve: {
     alias: {
       vue: 'vue/dist/vue.esm-bundler.js',
