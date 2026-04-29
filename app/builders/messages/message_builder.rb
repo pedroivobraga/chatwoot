@@ -22,6 +22,7 @@ class Messages::MessageBuilder
 
   def perform
     @message = @conversation.messages.build(message_params)
+    @message.historical = true if historical?
     process_attachments
     process_emails
     # When the message has no quoted content, it will just be rendered as a regular message
@@ -130,7 +131,7 @@ class Messages::MessageBuilder
   end
 
   def message_params
-    {
+    base = {
       account_id: @conversation.account_id,
       inbox_id: @conversation.inbox_id,
       message_type: message_type,
@@ -144,6 +145,19 @@ class Messages::MessageBuilder
       echo_id: @params[:echo_id],
       source_id: @params[:source_id]
     }.merge(external_created_at).merge(automation_rule_id).merge(campaign_id).merge(template_params)
+
+    if historical?
+      backdated_at = Time.zone.at(@params[:external_created_at].to_i)
+      base[:created_at] = backdated_at
+      base[:updated_at] = backdated_at
+    end
+    base
+  end
+
+  def historical?
+    return false unless @params.respond_to?(:[])
+
+    ActiveModel::Type::Boolean.new.cast(@params[:historical]) && @params[:external_created_at].present?
   end
 
   def email_inbox?

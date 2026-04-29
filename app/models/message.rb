@@ -83,6 +83,10 @@ class Message < ApplicationRecord
   attr_accessor :echo_id
   # Transient flag used to skip waiting_since clearing for specific bot/system messages.
   attr_accessor :preserve_waiting_since
+  # Transient flag set by Messages::MessageBuilder when importing historical messages
+  # (backdated via external_created_at). Suppresses side-effects that would alter
+  # conversation state or trigger outbound sends — see execute_after_create_commit_callbacks.
+  attr_accessor :historical
 
   enum message_type: { incoming: 0, outgoing: 1, activity: 2, template: 3 }
   enum content_type: {
@@ -315,6 +319,14 @@ class Message < ApplicationRecord
   end
 
   def execute_after_create_commit_callbacks
+    # Historical imports (backfill from external channels) skip all side-effects that
+    # would alter conversation state or trigger outbound sends. The record is persisted
+    # and MESSAGE_CREATED is still dispatched so the frontend renders the message.
+    if historical
+      Rails.configuration.dispatcher.dispatch(MESSAGE_CREATED, Time.zone.now, message: self, performed_by: Current.executed_by)
+      return
+    end
+
     # rails issue with order of active record callbacks being executed https://github.com/rails/rails/issues/20911
     reopen_conversation
     mark_pending_conversation_as_open_for_human_response
