@@ -8,12 +8,18 @@ import { useSnakeCase } from 'dashboard/composables/useTransformKeys';
 // components
 import ReplyBox from './ReplyBox.vue';
 import MessageList from 'next/message/MessageList.vue';
+import Message from 'dashboard/components-next/message/Message.vue';
 import ConversationLabelSuggestion from './conversation/LabelSuggestion.vue';
+import ConversationHistorySeparator from './ConversationHistorySeparator.vue';
 import Banner from 'dashboard/components/ui/Banner.vue';
 import Spinner from 'dashboard/components-next/spinner/Spinner.vue';
 
 // stores and apis
 import { mapGetters } from 'vuex';
+import MessageApi from 'dashboard/api/inbox/message.js';
+
+// utils
+import { useCamelCase } from 'dashboard/composables/useTransformKeys';
 
 // mixins
 import inboxMixin, { INBOX_FEATURES } from 'shared/mixins/inboxMixin';
@@ -39,9 +45,11 @@ import { INBOX_TYPES } from 'dashboard/helper/inbox';
 export default {
   components: {
     MessageList,
+    Message,
     ReplyBox,
     Banner,
     ConversationLabelSuggestion,
+    ConversationHistorySeparator,
     Spinner,
   },
   mixins: [inboxMixin],
@@ -84,6 +92,8 @@ export default {
       isProgrammaticScroll: false,
       messageSentSinceOpened: false,
       labelSuggestions: [],
+      historicalConversations: [],
+      isLoadingHistoricalConversation: false,
     };
   },
 
@@ -93,7 +103,28 @@ export default {
       currentUserId: 'getCurrentUserID',
       listLoadingStatus: 'getAllMessagesLoaded',
       currentAccountId: 'getCurrentAccountId',
+      getAccount: 'accounts/getAccount',
     }),
+    isAutoloadHistoryEnabled() {
+      const account = this.getAccount(this.currentAccountId);
+      return !!account?.settings?.autoload_conversation_history;
+    },
+    contactConversations() {
+      const contactId = this.currentChat?.meta?.sender?.id;
+      if (!contactId) return [];
+      return (
+        this.$store.getters['contactConversations/getContactConversation'](
+          contactId
+        ) || []
+      );
+    },
+    sortedPreviousConversations() {
+      const currentId = this.currentChat?.id;
+      const loadedIds = new Set(this.historicalConversations.map(c => c.id));
+      return this.contactConversations
+        .filter(c => c.id < currentId && !loadedIds.has(c.id))
+        .sort((a, b) => b.id - a.id);
+    },
     isOpen() {
       return this.currentChat?.status === wootConstants.STATUS_TYPE.OPEN;
     },
@@ -251,9 +282,26 @@ export default {
       if (newChat.id === oldChat.id) {
         return;
       }
+      this.historicalConversations = [];
+      this.isLoadingHistoricalConversation = false;
       this.fetchAllAttachmentsFromCurrentChat();
       this.fetchSuggestions();
       this.messageSentSinceOpened = false;
+    },
+    'currentChat.messages.length'(newLength, oldLength) {
+      if (newLength > oldLength) {
+        this.$nextTick(() => this.checkAndLoadHistory());
+      }
+    },
+    'currentChat.dataFetched'(newValue) {
+      if (newValue) {
+        this.$nextTick(() => this.checkAndLoadHistory());
+      }
+    },
+    listLoadingStatus(newValue) {
+      if (newValue) {
+        this.$nextTick(() => this.checkAndLoadHistory());
+      }
     },
   },
 
@@ -342,7 +390,10 @@ export default {
       this.conversationPanel = this.$el.querySelector('.conversation-panel');
       this.setScrollParams();
       this.conversationPanel.addEventListener('scroll', this.handleScroll);
-      this.$nextTick(() => this.scrollToBottom());
+      this.$nextTick(() => {
+        this.scrollToBottom();
+        this.$nextTick(() => this.checkAndLoadHistory());
+      });
       this.isLoadingPrevious = false;
     },
     removeScrollListener() {
@@ -413,11 +464,19 @@ export default {
           // Ignore Error
         } finally {
           this.isLoadingPrevious = false;
+          if (
+            this.conversationPanel.scrollTop < 100 &&
+            this.listLoadingStatus &&
+            this.isAutoloadHistoryEnabled
+          ) {
+            this.fetchNextHistoricalConversation();
+          }
         }
       }
     },
 
     handleScroll(e) {
+      const wasProgrammatic = this.isProgrammaticScroll;
       if (this.isProgrammaticScroll) {
         // Reset the flag
         this.isProgrammaticScroll = false;
@@ -426,7 +485,105 @@ export default {
         this.hasUserScrolled = true;
       }
       emitter.emit(BUS_EVENTS.ON_MESSAGE_LIST_SCROLL);
+      // Don't trigger auto-fetches for programmatic scroll adjustments (e.g. after
+      // loading a historical conversation). The next checkAndLoadHistory call is
+      // scheduled explicitly from fetchNextHistoricalConversation instead.
+      if (wasProgrammatic) return;
       this.fetchPreviousMessages(e.target.scrollTop);
+      if (
+        e.target.scrollTop < 100 &&
+        this.listLoadingStatus &&
+        this.isAutoloadHistoryEnabled
+      ) {
+        this.fetchNextHistoricalConversation();
+      }
+    },
+
+    checkAndLoadHistory() {
+      if (!this.conversationPanel || !this.isAutoloadHistoryEnabled) return;
+
+      const panel = this.conversationPanel;
+      const hasNoScroll = panel.scrollHeight <= panel.clientHeight;
+      const isAtTop = panel.scrollTop < 100;
+
+      // Only act when content fits in viewport or user is at the top
+      if (!hasNoScroll && !isAtTop) return;
+
+      if (this.listLoadingStatus) {
+        // All messages confirmed loaded — fetch historical conversation
+        this.fetchNextHistoricalConversation();
+      } else {
+        // Not yet confirmed: trigger a fetch to check if there are older messages.
+        // If the API returns empty, SET_ALL_MESSAGES_LOADED fires, listLoadingStatus
+        // becomes true, and the watcher will call checkAndLoadHistory again.
+        this.fetchPreviousMessages(0);
+      }
+    },
+
+    async fetchNextHistoricalConversation() {
+      if (this.isLoadingHistoricalConversation) return;
+
+      const contactId = this.currentChat?.meta?.sender?.id;
+      if (contactId && !this.contactConversations.length) {
+        await this.$store.dispatch('contactConversations/get', contactId);
+      }
+
+      const next = this.sortedPreviousConversations[0];
+      if (!next) return;
+
+      this.isLoadingHistoricalConversation = true;
+      const entry = {
+        id: next.id,
+        createdAt: next.created_at,
+        inbox: this.$store.getters['inboxes/getInbox'](next.inbox_id),
+        messages: [],
+        isLoading: true,
+      };
+      this.historicalConversations.unshift(entry);
+
+      try {
+        this.setScrollParams();
+        const { data } = await MessageApi.getPreviousMessages({
+          conversationId: next.id,
+        });
+        const messages = data?.payload || [];
+
+        const camelMessages = useCamelCase(messages, {
+          deep: true,
+          stopPaths: ['content_attributes.translations'],
+        });
+        // Use index-based replacement to ensure Vue 3 reactivity on the array item
+        const idx = this.historicalConversations.findIndex(
+          c => c.id === entry.id
+        );
+        if (idx !== -1) {
+          this.historicalConversations[idx] = {
+            ...this.historicalConversations[idx],
+            messages: camelMessages,
+            isLoading: false,
+          };
+        }
+
+        this.$nextTick(() => {
+          // Mark as programmatic so handleScroll doesn't re-trigger loading.
+          // After the adjustment, explicitly check whether more history should
+          // be loaded rather than relying on the scroll event.
+          this.isProgrammaticScroll = true;
+          const heightDifference =
+            this.conversationPanel.scrollHeight - this.heightBeforeLoad;
+          this.conversationPanel.scrollTop =
+            this.scrollTopBeforeLoad + heightDifference;
+          this.setScrollParams();
+          this.$nextTick(() => this.checkAndLoadHistory());
+        });
+      } catch (error) {
+        // Remove failed entry to allow retry
+        this.historicalConversations = this.historicalConversations.filter(
+          c => c.id !== next.id
+        );
+      } finally {
+        this.isLoadingHistoricalConversation = false;
+      }
     },
 
     makeMessagesRead() {
@@ -468,6 +625,37 @@ export default {
       @retry="handleMessageRetry"
     >
       <template #beforeAll>
+        <template
+          v-for="histConv in historicalConversations"
+          :key="histConv.id"
+        >
+          <li
+            v-if="histConv.isLoading"
+            class="min-h-[4rem] flex flex-shrink-0 flex-grow-0 items-center flex-auto justify-center max-w-full mt-0 mr-0 mb-1 ml-0 relative"
+          >
+            <Spinner class="text-n-brand" />
+          </li>
+          <template v-else>
+            <Message
+              v-for="(msg, index) in histConv.messages"
+              :key="msg.id"
+              v-bind="msg"
+              :is-email-inbox="isAnEmailChannel"
+              :group-with-next="
+                index < histConv.messages.length - 1 &&
+                histConv.messages[index + 1]?.sender?.id === msg.sender?.id
+              "
+              :inbox-supports-reply-to="inboxSupportsReplyTo"
+              :current-user-id="currentUserId"
+              data-clarity-mask="True"
+            />
+            <ConversationHistorySeparator
+              :conversation="histConv"
+              :inbox="histConv.inbox"
+              :account-id="currentAccountId"
+            />
+          </template>
+        </template>
         <transition name="slide-up">
           <!-- eslint-disable-next-line vue/require-toggle-inside-transition -->
           <li
