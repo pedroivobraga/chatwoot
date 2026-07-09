@@ -30,6 +30,7 @@ class Api::V1::AccountsController < Api::BaseController
       locale: account_params[:locale],
       user: current_user
     ).perform
+    enqueue_branding_enrichment
     if @user
       # Authenticated users (dashboard "add account") and api_only signups
       # need the full response with account_id. API-only deployments have no
@@ -69,6 +70,17 @@ class Api::V1::AccountsController < Api::BaseController
 
   private
 
+  def enqueue_branding_enrichment
+    email = account_params[:email].presence || @user&.email
+    return if email.blank?
+
+    Account::BrandingEnrichmentJob.perform_later(@account.id, email)
+    Redis::Alfred.set(format(Redis::Alfred::ACCOUNT_ONBOARDING_ENRICHMENT, account_id: @account.id), '1', ex: 30)
+  rescue StandardError => e
+    # Enrichment is optional — never let queue/Redis failures abort signup
+    ChatwootExceptionTracker.new(e).capture_exception
+  end
+
   def ensure_account_name
     # ensure that account_name and user_full_name is present
     # this is becuase the account builder and the models validations are not triggered
@@ -98,7 +110,7 @@ class Api::V1::AccountsController < Api::BaseController
   end
 
   def custom_attributes_params
-    params.permit(:industry, :company_size, :timezone)
+    params.permit(:industry, :company_size, :timezone, :referral_source, :user_role, :website)
   end
 
   def settings_params

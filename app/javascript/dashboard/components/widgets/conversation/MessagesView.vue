@@ -1,7 +1,7 @@
 <script>
-import { ref, provide } from 'vue';
+import { ref, provide, useTemplateRef } from 'vue';
+import { useElementSize } from '@vueuse/core';
 // composable
-import { useKeyboardEvents } from 'dashboard/composables/useKeyboardEvents';
 import { useLabelSuggestions } from 'dashboard/composables/useLabelSuggestions';
 import { useSnakeCase } from 'dashboard/composables/useTransformKeys';
 
@@ -13,6 +13,7 @@ import ConversationLabelSuggestion from './conversation/LabelSuggestion.vue';
 import ConversationHistorySeparator from './ConversationHistorySeparator.vue';
 import Banner from 'dashboard/components/ui/Banner.vue';
 import Spinner from 'dashboard/components-next/spinner/Spinner.vue';
+import ResizableEditorWrapper from './ResizableEditorWrapper.vue';
 
 // stores and apis
 import { mapGetters } from 'vuex';
@@ -51,21 +52,16 @@ export default {
     ConversationLabelSuggestion,
     ConversationHistorySeparator,
     Spinner,
+    ResizableEditorWrapper,
   },
   mixins: [inboxMixin],
   setup() {
-    const isPopOutReplyBox = ref(false);
     const conversationPanelRef = ref(null);
-
-    const keyboardEvents = {
-      Escape: {
-        action: () => {
-          isPopOutReplyBox.value = false;
-        },
-      },
-    };
-
-    useKeyboardEvents(keyboardEvents);
+    const resizableEditorWrapperRef = ref(null);
+    const messagesViewRef = useTemplateRef('messagesViewRef');
+    const topBannerRef = useTemplateRef('topBannerRef');
+    const { height: containerHeight } = useElementSize(messagesViewRef);
+    const { height: topBannerHeight } = useElementSize(topBannerRef);
 
     const {
       captainTasksEnabled,
@@ -76,11 +72,15 @@ export default {
     provide('contextMenuElementTarget', conversationPanelRef);
 
     return {
-      isPopOutReplyBox,
       captainTasksEnabled,
       getLabelSuggestions,
       isLabelSuggestionFeatureEnabled,
       conversationPanelRef,
+      resizableEditorWrapperRef,
+      messagesViewRef,
+      topBannerRef,
+      containerHeight,
+      topBannerHeight,
     };
   },
   data() {
@@ -287,6 +287,7 @@ export default {
       this.fetchAllAttachmentsFromCurrentChat();
       this.fetchSuggestions();
       this.messageSentSinceOpened = false;
+      this.resetReplyEditorHeight();
     },
     'currentChat.messages.length'(newLength, oldLength) {
       if (newLength > oldLength) {
@@ -594,26 +595,37 @@ export default {
       const payload = useSnakeCase(message);
       await this.$store.dispatch('sendMessageWithData', payload);
     },
+    toggleReplyEditorSize() {
+      this.resizableEditorWrapperRef?.toggleEditorExpand?.();
+    },
+    resetReplyEditorHeight() {
+      this.resizableEditorWrapperRef?.resetEditorHeight?.();
+    },
   },
 };
 </script>
 
 <template>
-  <div class="flex flex-col justify-between flex-grow h-full min-w-0 m-0">
-    <Banner
-      v-if="!currentChat.can_reply"
-      color-scheme="alert"
-      class="mx-2 mt-2 overflow-hidden rounded-lg"
-      :banner-message="replyWindowBannerMessage"
-      :href-link="replyWindowLink"
-      :href-link-text="replyWindowLinkText"
-    />
-    <Banner
-      v-else-if="hasDuplicateInstagramInbox"
-      color-scheme="alert"
-      class="mx-2 mt-2 overflow-hidden rounded-lg"
-      :banner-message="$t('CONVERSATION.OLD_INSTAGRAM_INBOX_REPLY_BANNER')"
-    />
+  <div
+    ref="messagesViewRef"
+    class="flex flex-col justify-between flex-grow h-full min-w-0 m-0"
+  >
+    <div ref="topBannerRef">
+      <Banner
+        v-if="!currentChat.can_reply"
+        color-scheme="alert"
+        class="mx-2 mt-2 overflow-hidden rounded-lg"
+        :banner-message="replyWindowBannerMessage"
+        :href-link="replyWindowLink"
+        :href-link-text="replyWindowLinkText"
+      />
+      <Banner
+        v-else-if="hasDuplicateInstagramInbox"
+        color-scheme="alert"
+        class="mx-2 mt-2 overflow-hidden rounded-lg"
+        :banner-message="$t('CONVERSATION.OLD_INSTAGRAM_INBOX_REPLY_BANNER')"
+      />
+    </div>
     <MessageList
       ref="conversationPanelRef"
       class="conversation-panel flex-shrink flex-grow basis-px flex flex-col overflow-y-auto relative h-full m-0 pb-4"
@@ -686,13 +698,7 @@ export default {
         />
       </template>
     </MessageList>
-    <div
-      class="flex relative flex-col"
-      :class="{
-        'modal-mask': isPopOutReplyBox,
-        'bg-n-surface-1': !isPopOutReplyBox,
-      }"
-    >
+    <div class="flex relative flex-col bg-n-surface-1">
       <div
         v-if="isAnyoneTyping"
         class="absolute flex items-center w-full h-0 -top-7"
@@ -708,42 +714,12 @@ export default {
           />
         </div>
       </div>
-      <ReplyBox
-        :pop-out-reply-box="isPopOutReplyBox"
-        @update:pop-out-reply-box="isPopOutReplyBox = $event"
-      />
+      <ResizableEditorWrapper
+        ref="resizableEditorWrapperRef"
+        :container-height="Math.max(0, containerHeight - topBannerHeight)"
+      >
+        <ReplyBox @toggle-editor-size="toggleReplyEditorSize" />
+      </ResizableEditorWrapper>
     </div>
   </div>
 </template>
-
-<style scoped lang="scss">
-.modal-mask {
-  @apply fixed;
-
-  &::v-deep {
-    .ProseMirror-woot-style {
-      @apply max-h-[25rem];
-    }
-
-    .reply-box {
-      @apply border border-n-weak max-w-[75rem] w-[70%];
-
-      &.is-private {
-        @apply dark:border-n-amber-3/30 border-n-amber-12/5;
-      }
-    }
-
-    .reply-box .reply-box__top {
-      @apply relative min-h-[27.5rem];
-    }
-
-    .reply-box__top .input {
-      @apply min-h-[27.5rem];
-    }
-
-    .emoji-dialog {
-      @apply absolute ltr:left-auto rtl:right-auto bottom-1;
-    }
-  }
-}
-</style>
