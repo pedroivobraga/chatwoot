@@ -30,7 +30,7 @@ services:
       - chatwoot_redis_data:/data
 
   chatwoot_app:
-    image: pedroivobraga/chatwoot-rails:4.12.1-enterprise-alpha
+    image: pedroivobraga/chatwoot-rails:4.15.1-enterprise
     command: bundle exec rails s -p 3000 -b 0.0.0.0
     entrypoint: docker/entrypoints/rails.sh
     restart: unless-stopped
@@ -87,7 +87,7 @@ services:
       - SMTP_OPENSSL_VERIFY_MODE=peer
 
   chatwoot_sidekiq:
-    image: pedroivobraga/chatwoot-rails:4.12.1-enterprise-alpha
+    image: pedroivobraga/chatwoot-rails:4.15.1-enterprise
     command: bundle exec sidekiq -C config/sidekiq.yml
     restart: unless-stopped
     depends_on:
